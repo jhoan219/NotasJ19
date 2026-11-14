@@ -12,6 +12,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   lista: $('listaNotas'), vacio: $('vacio'), contador: $('contador'),
   buscador: $('buscador'), btnNueva: $('btnNueva'),
+  btnExportar: $('btnExportar'), inImportar: $('inputImportar'),
   modalEditor: $('modalEditor'), form: $('formNota'), tituloModal: $('tituloModal'),
   inTitulo: $('inputTitulo'), inContenido: $('inputContenido'),
   inImagen: $('inputImagen'), previaImagen: $('previaImagen'), btnQuitarImagen: $('btnQuitarImagen'),
@@ -31,6 +32,19 @@ let urlsActivas = [];      // Object URLs creadas (se liberan al re-renderizar)
 let urlPrevia = null;      // Object URL de la previsualización del formulario
 
 const LIMITE_MB = 50;      // límite razonable por archivo
+
+/* Ids de notas borradas en ESTE dispositivo: evitan que reaparezcan
+ * al volver a cargar un notas.json que todavía las contiene. */
+const CLAVE_BORRADAS = 'notasj19_borradas';
+function leerBorradas() {
+  try { return JSON.parse(localStorage.getItem(CLAVE_BORRADAS)) || []; } catch { return []; }
+}
+function marcarBorrada(id) {
+  try {
+    const b = leerBorradas();
+    if (!b.includes(id)) { b.push(id); localStorage.setItem(CLAVE_BORRADAS, JSON.stringify(b)); }
+  } catch { /* localStorage no disponible: se ignora */ }
+}
 
 /* ---------- Utilidades ---------- */
 
@@ -235,6 +249,7 @@ el.btnNoBorrar.addEventListener('click', () => el.modalBorrar.close());
 el.btnSiBorrar.addEventListener('click', async () => {
   try {
     await DB.remove(borrarId);
+    marcarBorrada(borrarId);
   } catch (err) {
     console.error(err);
   }
@@ -254,6 +269,44 @@ for (const m of [el.modalEditor, el.modalBorrar]) {
 /* ---------- Búsqueda en tiempo real ---------- */
 el.buscador.addEventListener('input', render);
 
+/* ---------- Exportar / importar notas.json ---------- */
+el.btnExportar.addEventListener('click', async () => {
+  try {
+    const datos = await DB.exportar();
+    const blob = new Blob([JSON.stringify(datos)], { type: 'application/json' });
+    descargar({ nombre: 'notas.json', blob });
+  } catch (err) {
+    console.error(err);
+    alert('No se pudo exportar las notas.');
+  }
+});
+
+el.inImportar.addEventListener('change', async () => {
+  const f = el.inImportar.files[0];
+  if (!f) return;
+  try {
+    const cambios = await DB.importar(JSON.parse(await f.text()));
+    await cargar();
+    alert(cambios ? `Se importaron ${cambios} nota(s).` : 'No había notas nuevas para importar.');
+  } catch (err) {
+    console.error(err);
+    alert('Archivo no válido: ' + err.message);
+  }
+  el.inImportar.value = '';
+});
+
+/**
+ * Carga automática de `notas.json` publicado junto a la app (GitHub Pages).
+ * Si el archivo no existe o la página se abrió como file://, se ignora.
+ */
+async function cargarPublicadas() {
+  try {
+    const r = await fetch('notas.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    await DB.importar(await r.json(), leerBorradas());
+  } catch { /* sin notas.json o sin acceso: no pasa nada */ }
+}
+
 /* ---------- Arranque ---------- */
 async function cargar() {
   notas = await DB.getAll();
@@ -263,6 +316,7 @@ async function cargar() {
 (async function iniciar() {
   try {
     await DB.init();
+    await cargarPublicadas();
     await cargar();
   } catch (err) {
     console.error(err);

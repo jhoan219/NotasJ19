@@ -72,6 +72,8 @@ body {
   box-shadow: 0 0 12px rgba(0,77,152,.9), 0 0 12px rgba(165,0,68,.7);
 }
 
+.acciones { display: flex; align-items: center; gap: .5rem; }
+
 .buscador {
   flex: 1; max-width: 520px; margin-left: auto;
   display: flex; align-items: center; gap: .6rem;
@@ -211,7 +213,7 @@ mark { background: rgba(237,187,0,.3); color: #fff; border-radius: 3px; padding:
 @media (max-width: 640px) {
   .cabecera { flex-wrap: wrap; }
   .buscador { order: 3; flex-basis: 100%; max-width: none; margin-left: 0; }
-  .btn--primario { margin-left: auto; }
+  .acciones { margin-left: auto; }
   .rejilla-notas { grid-template-columns: 1fr; }
 }
 

@@ -28,6 +28,22 @@ app.js       Lógica de interfaz
 
 > Para probar en local basta con abrir `index.html` con doble clic en Chrome, Edge o Firefox (no usa módulos ES, así que no necesita servidor).
 
+## Compartir notas entre dispositivos con `notas.json`
+
+GitHub Pages no puede guardar datos, así que las notas viven en cada navegador. Para llevarlas a otro dispositivo se usa un archivo `notas.json`:
+
+1. En el dispositivo con las notas, pulsa **Exportar**: descarga `notas.json` (incluye imágenes y adjuntos en base64).
+2. Reemplaza el `notas.json` de la raíz del repositorio por ese archivo (GitHub → *Add file → Upload files*).
+3. Al abrir la web en otro dispositivo, la app carga `notas.json` sola y agrega las notas nuevas. Si una nota existe en ambos lados, gana la más reciente.
+
+También puedes usar **Importar** para cargar un `.json` a mano (sirve en local con doble clic, donde la carga automática no funciona).
+
+Ojo:
+- Es una sincronización **manual y en un solo sentido** (repo → dispositivos). Para sincronizar automáticamente en ambos sentidos hace falta un backend (Firebase, Supabase o Express).
+- Una nota borrada en un dispositivo no reaparece al recargar `notas.json` en ese mismo dispositivo, pero seguirá en el JSON hasta que lo vuelvas a exportar y subir.
+- Si el repositorio es público, **`notas.json` también lo es**: cualquiera con el enlace podría leer tus notas, imágenes y adjuntos. Usa un repo privado con Pages solo si tu plan lo permite, o no publiques notas sensibles.
+- Un JSON con muchas imágenes pesa (base64 añade ~33 %). Súbelo por la web de GitHub solo si pesa menos de 25 MB.
+
 ## Migrar a una API REST (Node.js/Express)
 
 `app.js` solo usa esta interfaz de `db.js`:

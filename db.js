@@ -13,6 +13,8 @@
  *   DB.create(nota)      -> Promise<Nota>   (asigna id y fechas)
  *   DB.update(id, datos) -> Promise<Nota>
  *   DB.remove(id)        -> Promise<void>
+ *   DB.exportar()        -> Promise<objeto JSON>  (para notas.json)
+ *   DB.importar(json)    -> Promise<number>       (fusiona notas)
  *
  * Forma de una Nota:
  * {
@@ -122,5 +124,81 @@ async function remove(id) {
   await promisificar(store('readwrite').delete(id));
 }
 
-return { init, getAll, get, create, update, remove };
+/* ---------- Exportar / importar (JSON) ----------
+ * Las imágenes y adjuntos se guardan como Data URL (base64) dentro del JSON,
+ * de modo que un solo archivo `notas.json` contiene todo.
+ */
+
+/** Blob -> Data URL (texto base64). */
+function blobADataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const lector = new FileReader();
+    lector.onload = () => resolve(lector.result);
+    lector.onerror = () => reject(lector.error);
+    lector.readAsDataURL(blob);
+  });
+}
+
+/** Data URL -> Blob. */
+function dataURLABlob(url) {
+  const [cabecera, base64] = url.split(',');
+  const tipo = (cabecera.match(/data:(.*?);base64/) || [])[1] || 'application/octet-stream';
+  const binario = atob(base64);
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  return new Blob([bytes], { type: tipo });
+}
+
+/** Devuelve todas las notas en un objeto serializable (para notas.json). */
+async function exportar() {
+  const notas = await getAll();
+  const salida = [];
+  for (const n of notas) {
+    salida.push({
+      id: n.id,
+      titulo: n.titulo,
+      contenido: n.contenido,
+      creada: n.creada,
+      actualizada: n.actualizada,
+      imagen: n.imagen ? await blobADataURL(n.imagen) : null,
+      adjunto: n.adjunto
+        ? { nombre: n.adjunto.nombre, tipo: n.adjunto.tipo, tamano: n.adjunto.tamano, datos: await blobADataURL(n.adjunto.blob) }
+        : null,
+    });
+  }
+  return { app: 'NotasJ19', version: 1, exportada: Date.now(), notas: salida };
+}
+
+/**
+ * Fusiona las notas de un JSON con las locales.
+ * - Si la nota no existe localmente, se agrega.
+ * - Si existe, gana la más reciente (campo `actualizada`).
+ * - Los ids en `ignorar` (notas borradas localmente) se omiten.
+ * Devuelve cuántas notas se agregaron o actualizaron.
+ */
+async function importar(datos, ignorar = []) {
+  if (!datos || !Array.isArray(datos.notas)) throw new Error('El archivo JSON no tiene el formato de NotasJ19.');
+  let cambios = 0;
+  for (const r of datos.notas) {
+    if (!r.id || ignorar.includes(r.id)) continue;
+    const local = await get(r.id);
+    if (local && local.actualizada >= (r.actualizada || 0)) continue;
+    const nota = {
+      id: r.id,
+      titulo: r.titulo || '',
+      contenido: r.contenido || '',
+      imagen: r.imagen ? dataURLABlob(r.imagen) : null,
+      adjunto: r.adjunto
+        ? { nombre: r.adjunto.nombre, tipo: r.adjunto.tipo, tamano: r.adjunto.tamano, blob: dataURLABlob(r.adjunto.datos) }
+        : null,
+      creada: r.creada || Date.now(),
+      actualizada: r.actualizada || Date.now(),
+    };
+    await promisificar(store('readwrite').put(nota));
+    cambios++;
+  }
+  return cambios;
+}
+
+return { init, getAll, get, create, update, remove, exportar, importar };
 })();

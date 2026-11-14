@@ -28,7 +28,12 @@
       <input id="buscador" type="search" placeholder="Buscar por título o contenido…" autocomplete="off" />
     </label>
 
-    <button id="btnNueva" class="btn btn--primario" type="button">+ Nueva nota</button>
+    <div class="acciones">
+      <button id="btnExportar" class="btn btn--sec" type="button" title="Descargar todas las notas como notas.json">Exportar</button>
+      <label class="btn btn--sec" for="inputImportar" title="Cargar notas desde un archivo .json">Importar</label>
+      <input id="inputImportar" type="file" accept="application/json,.json" hidden />
+      <button id="btnNueva" class="btn btn--primario" type="button">+ Nueva nota</button>
+    </div>
   </header>
 
   <main class="contenedor">
