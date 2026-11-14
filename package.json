@@ -1,0 +1,10 @@
+{
+  "name": "notasj19",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "NotasJ19: notas con imágenes y adjuntos, sincronizadas con Vercel (Redis + Blob privado)",
+  "dependencies": {
+    "@vercel/blob": "^2.3.0"
+  }
+}

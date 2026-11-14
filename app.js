@@ -13,6 +13,9 @@ const el = {
   lista: $('listaNotas'), vacio: $('vacio'), contador: $('contador'),
   buscador: $('buscador'), btnNueva: $('btnNueva'),
   btnExportar: $('btnExportar'), inImportar: $('inputImportar'),
+  btnSync: $('btnSync'), estadoSync: $('estadoSync'), modalSync: $('modalSync'), formSync: $('formSync'),
+  syncPassword: $('syncPassword'), syncError: $('syncError'),
+  btnSyncDesconectar: $('btnSyncDesconectar'), btnSyncCerrar: $('btnSyncCerrar'), btnSyncGuardar: $('btnSyncGuardar'),
   modalEditor: $('modalEditor'), form: $('formNota'), tituloModal: $('tituloModal'),
   inTitulo: $('inputTitulo'), inContenido: $('inputContenido'),
   inImagen: $('inputImagen'), previaImagen: $('previaImagen'), btnQuitarImagen: $('btnQuitarImagen'),
@@ -31,17 +34,14 @@ let borrarId = null;       // id pendiente de confirmar eliminación
 let urlsActivas = [];      // Object URLs creadas (se liberan al re-renderizar)
 let urlPrevia = null;      // Object URL de la previsualización del formulario
 
-const LIMITE_MB = 50;      // límite razonable por archivo
+const LIMITE_MB = 4;       // límite por archivo: las funciones gratuitas de Vercel aceptan ~4,5 MB por petición
 
-/* Ids de notas borradas en ESTE dispositivo: evitan que reaparezcan
- * al volver a cargar un notas.json que todavía las contiene. */
+/* Ids de notas borradas en ESTE dispositivo: sync.js los usa para borrarlas
+ * también en el servidor y para que no reaparezcan. */
 const CLAVE_BORRADAS = 'notasj19_borradas';
-function leerBorradas() {
-  try { return JSON.parse(localStorage.getItem(CLAVE_BORRADAS)) || []; } catch { return []; }
-}
 function marcarBorrada(id) {
   try {
-    const b = leerBorradas();
+    const b = JSON.parse(localStorage.getItem(CLAVE_BORRADAS)) || [];
     if (!b.includes(id)) { b.push(id); localStorage.setItem(CLAVE_BORRADAS, JSON.stringify(b)); }
   } catch { /* localStorage no disponible: se ignora */ }
 }
@@ -200,13 +200,39 @@ function mostrarError(msg) {
   el.errorForm.hidden = false;
 }
 
-el.inImagen.addEventListener('change', () => {
+/**
+ * Reduce fotos grandes (p. ej. las del celular) a máx. 1920 px en JPEG, para que
+ * quepan en el límite de subida y ocupen menos espacio. Si no se puede (GIF/SVG,
+ * error) o no mejora el tamaño, devuelve el archivo original.
+ */
+async function comprimirImagen(archivo) {
+  if (archivo.size <= 1.5 * 1024 ** 2 || /gif|svg/.test(archivo.type)) return archivo;
+  try {
+    const bmp = await createImageBitmap(archivo);
+    const escala = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
+    const lienzo = document.createElement('canvas');
+    lienzo.width = Math.round(bmp.width * escala);
+    lienzo.height = Math.round(bmp.height * escala);
+    const ctx = lienzo.getContext('2d');
+    ctx.fillStyle = '#fff';   // fondo blanco para PNG con transparencia
+    ctx.fillRect(0, 0, lienzo.width, lienzo.height);
+    ctx.drawImage(bmp, 0, 0, lienzo.width, lienzo.height);
+    if (bmp.close) bmp.close();
+    const blob = await new Promise((ok) => lienzo.toBlob(ok, 'image/jpeg', 0.85));
+    return blob && blob.size < archivo.size ? blob : archivo;
+  } catch {
+    return archivo;
+  }
+}
+
+el.inImagen.addEventListener('change', async () => {
   const f = el.inImagen.files[0];
   if (!f) return;
   if (!f.type.startsWith('image/')) return mostrarError('El archivo elegido no es una imagen.');
-  if (f.size > LIMITE_MB * 1024 ** 2) return mostrarError(`La imagen supera ${LIMITE_MB} MB.`);
+  const imagen = await comprimirImagen(f);
+  if (imagen.size > LIMITE_MB * 1024 ** 2) return mostrarError(`La imagen supera ${LIMITE_MB} MB incluso comprimida.`);
   el.errorForm.hidden = true;
-  fijarImagen(f);
+  fijarImagen(imagen);
 });
 
 el.inAdjunto.addEventListener('change', () => {
@@ -238,6 +264,7 @@ el.form.addEventListener('submit', async (e) => {
     else await DB.create(datos);
     el.modalEditor.close();
     await cargar();
+    Sync.programar();
   } catch (err) {
     console.error(err);
     mostrarError('No se pudo guardar. Revisa el espacio disponible del navegador.');
@@ -256,6 +283,7 @@ el.btnSiBorrar.addEventListener('click', async () => {
   borrarId = null;
   el.modalBorrar.close();
   await cargar();
+  Sync.programar();
 });
 
 /* ---------- Visor de imagen: cerrar al hacer clic ---------- */
@@ -287,6 +315,7 @@ el.inImportar.addEventListener('change', async () => {
   try {
     const cambios = await DB.importar(JSON.parse(await f.text()));
     await cargar();
+    Sync.programar();
     alert(cambios ? `Se importaron ${cambios} nota(s).` : 'No había notas nuevas para importar.');
   } catch (err) {
     console.error(err);
@@ -295,17 +324,58 @@ el.inImportar.addEventListener('change', async () => {
   el.inImportar.value = '';
 });
 
-/**
- * Carga automática de `notas.json` publicado junto a la app (GitHub Pages).
- * Si el archivo no existe o la página se abrió como file://, se ignora.
- */
-async function cargarPublicadas() {
-  try {
-    const r = await fetch('notas.json', { cache: 'no-store' });
-    if (!r.ok) return;
-    await DB.importar(await r.json(), leerBorradas());
-  } catch { /* sin notas.json o sin acceso: no pasa nada */ }
+/* ---------- Sincronización con el servidor (ver sync.js) ---------- */
+function pintarEstado(estado, mensaje) {
+  const hora = new Date().toLocaleTimeString('es-PE', { timeStyle: 'short' });
+  const textos = {
+    sincronizando: '☁ Sincronizando…',
+    ok: `☁ Sincronizado ${hora}`,
+    error: `⚠ ${mensaje}`,
+    apagada: '',
+  };
+  el.estadoSync.textContent = textos[estado] ?? '';
 }
+Sync.configurar({ alCambiar: cargar, alEstado: pintarEstado });
+
+el.btnSync.addEventListener('click', () => {
+  const dentro = Sync.activa();
+  el.syncPassword.value = '';
+  el.syncPassword.closest('label').hidden = dentro;   // con sesión iniciada no hace falta la contraseña
+  el.btnSyncDesconectar.hidden = !dentro;
+  el.btnSyncGuardar.textContent = dentro ? 'Sincronizar ahora' : 'Entrar y sincronizar';
+  el.syncError.hidden = true;
+  el.modalSync.showModal();
+  if (!dentro) el.syncPassword.focus();
+});
+el.btnSyncCerrar.addEventListener('click', () => el.modalSync.close());
+
+el.formSync.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  el.syncError.hidden = true;
+  el.btnSyncGuardar.disabled = true;
+
+  let error = null;
+  if (!Sync.activa()) {
+    const clave = el.syncPassword.value;
+    error = clave ? await Sync.entrar(clave) : 'Escribe la contraseña.';
+  }
+  if (!error) error = await Sync.sincronizar();
+
+  el.btnSyncGuardar.disabled = false;
+  if (error) {
+    el.syncError.textContent = error;
+    el.syncError.hidden = false;
+  } else {
+    el.syncPassword.value = '';
+    el.modalSync.close();
+  }
+});
+
+el.btnSyncDesconectar.addEventListener('click', () => {
+  Sync.salir();
+  pintarEstado('apagada');
+  el.modalSync.close();
+});
 
 /* ---------- Arranque ---------- */
 async function cargar() {
@@ -316,8 +386,9 @@ async function cargar() {
 (async function iniciar() {
   try {
     await DB.init();
-    await cargarPublicadas();
     await cargar();
+    Sync.iniciarAuto();
+    Sync.sincronizar();
   } catch (err) {
     console.error(err);
     el.contador.textContent = 'No se pudo iniciar el almacenamiento local (¿modo privado?).';

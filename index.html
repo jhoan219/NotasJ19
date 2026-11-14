@@ -29,6 +29,7 @@
     </label>
 
     <div class="acciones">
+      <button id="btnSync" class="btn btn--sec" type="button" title="Sincronizar con el servidor">☁ Sincronizar</button>
       <button id="btnExportar" class="btn btn--sec" type="button" title="Descargar todas las notas como notas.json">Exportar</button>
       <label class="btn btn--sec" for="inputImportar" title="Cargar notas desde un archivo .json">Importar</label>
       <input id="inputImportar" type="file" accept="application/json,.json" hidden />
@@ -38,6 +39,7 @@
 
   <main class="contenedor">
     <p id="contador" class="contador" aria-live="polite"></p>
+    <p id="estadoSync" class="contador contador--sync" aria-live="polite"></p>
     <section id="listaNotas" class="rejilla-notas" aria-label="Lista de notas"></section>
     <div id="vacio" class="vacio" hidden>
       <p class="vacio__titulo">Sin notas por aquí</p>
@@ -101,6 +103,27 @@
     </div>
   </dialog>
 
+  <!-- Modal de sincronización con el servidor -->
+  <dialog id="modalSync" class="modal">
+    <form id="formSync" class="modal__caja" method="dialog" novalidate>
+      <h2>Sincronización</h2>
+      <p class="ayuda">Tus notas se guardan en tu propio servidor (Vercel) y aparecen en todos tus dispositivos. Entra con la contraseña que definiste al desplegar la app; se pide una vez por dispositivo y la sesión dura 30 días.</p>
+
+      <label class="campo">
+        <span>Contraseña</span>
+        <input id="syncPassword" type="password" autocomplete="current-password" />
+      </label>
+
+      <p id="syncError" class="error" role="alert" hidden></p>
+
+      <div class="modal__acciones">
+        <button id="btnSyncDesconectar" class="btn btn--texto" type="button" hidden>Cerrar sesión</button>
+        <button id="btnSyncCerrar" class="btn btn--texto" type="button">Cerrar</button>
+        <button id="btnSyncGuardar" class="btn btn--primario" type="submit">Entrar y sincronizar</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Visor de imagen ampliada -->
   <dialog id="modalImagen" class="modal modal--imagen">
     <img id="imagenGrande" alt="Imagen ampliada" />
@@ -108,6 +131,7 @@
 
   <!-- Orden importante: primero la capa de datos, luego la interfaz -->
   <script src="db.js"></script>
+  <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

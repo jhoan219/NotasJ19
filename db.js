@@ -15,6 +15,7 @@
  *   DB.remove(id)        -> Promise<void>
  *   DB.exportar()        -> Promise<objeto JSON>  (para notas.json)
  *   DB.importar(json)    -> Promise<number>       (fusiona notas)
+ *   DB.guardar(nota)     -> Promise<void>         (usado por sync.js)
  *
  * Forma de una Nota:
  * {
@@ -149,23 +150,53 @@ function dataURLABlob(url) {
   return new Blob([bytes], { type: tipo });
 }
 
+/** Convierte una nota local (con Blobs) en un objeto JSON puro. */
+async function serializar(n) {
+  return {
+    id: n.id,
+    titulo: n.titulo,
+    contenido: n.contenido,
+    creada: n.creada,
+    actualizada: n.actualizada,
+    imagen: n.imagen ? await blobADataURL(n.imagen) : null,
+    adjunto: n.adjunto
+      ? { nombre: n.adjunto.nombre, tipo: n.adjunto.tipo, tamano: n.adjunto.tamano, datos: await blobADataURL(n.adjunto.blob) }
+      : null,
+  };
+}
+
+/** Inversa de serializar(): objeto JSON -> nota con Blobs. */
+function deserializar(r) {
+  return {
+    id: r.id,
+    titulo: r.titulo || '',
+    contenido: r.contenido || '',
+    imagen: r.imagen ? dataURLABlob(r.imagen) : null,
+    adjunto: r.adjunto
+      ? { nombre: r.adjunto.nombre, tipo: r.adjunto.tipo, tamano: r.adjunto.tamano, blob: dataURLABlob(r.adjunto.datos) }
+      : null,
+    creada: r.creada || Date.now(),
+    actualizada: r.actualizada || Date.now(),
+  };
+}
+
+/** Guarda (crea o reemplaza) una nota serializada conservando sus fechas. */
+async function guardarSerializada(r) {
+  const nota = deserializar(r);
+  await promisificar(store('readwrite').put(nota));
+  return nota;
+}
+
+/** Guarda (crea o reemplaza) una nota tal cual, con sus Blobs y fechas. */
+async function guardar(nota) {
+  await promisificar(store('readwrite').put(nota));
+}
+
 /** Devuelve todas las notas en un objeto serializable (para notas.json). */
 async function exportar() {
   const notas = await getAll();
   const salida = [];
-  for (const n of notas) {
-    salida.push({
-      id: n.id,
-      titulo: n.titulo,
-      contenido: n.contenido,
-      creada: n.creada,
-      actualizada: n.actualizada,
-      imagen: n.imagen ? await blobADataURL(n.imagen) : null,
-      adjunto: n.adjunto
-        ? { nombre: n.adjunto.nombre, tipo: n.adjunto.tipo, tamano: n.adjunto.tamano, datos: await blobADataURL(n.adjunto.blob) }
-        : null,
-    });
-  }
+  for (const n of notas) salida.push(await serializar(n));
   return { app: 'NotasJ19', version: 1, exportada: Date.now(), notas: salida };
 }
 
@@ -183,22 +214,11 @@ async function importar(datos, ignorar = []) {
     if (!r.id || ignorar.includes(r.id)) continue;
     const local = await get(r.id);
     if (local && local.actualizada >= (r.actualizada || 0)) continue;
-    const nota = {
-      id: r.id,
-      titulo: r.titulo || '',
-      contenido: r.contenido || '',
-      imagen: r.imagen ? dataURLABlob(r.imagen) : null,
-      adjunto: r.adjunto
-        ? { nombre: r.adjunto.nombre, tipo: r.adjunto.tipo, tamano: r.adjunto.tamano, blob: dataURLABlob(r.adjunto.datos) }
-        : null,
-      creada: r.creada || Date.now(),
-      actualizada: r.actualizada || Date.now(),
-    };
-    await promisificar(store('readwrite').put(nota));
+    await guardarSerializada(r);
     cambios++;
   }
   return cambios;
 }
 
-return { init, getAll, get, create, update, remove, exportar, importar };
+return { init, getAll, get, create, update, remove, exportar, importar, guardar };
 })();

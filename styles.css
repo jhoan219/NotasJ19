@@ -20,6 +20,9 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Sin esto, reglas como .btn { display: ... } anulan el atributo hidden */
+[hidden] { display: none !important; }
+
 html { color-scheme: dark; }
 
 body {
@@ -72,7 +75,10 @@ body {
   box-shadow: 0 0 12px rgba(0,77,152,.9), 0 0 12px rgba(165,0,68,.7);
 }
 
-.acciones { display: flex; align-items: center; gap: .5rem; }
+.acciones { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+.contador--sync { margin-top: -.6rem; color: var(--dorado); }
+.contador--sync:empty { display: none; }
+.ayuda { font-size: .85rem; line-height: 1.45; }
 
 .buscador {
   flex: 1; max-width: 520px; margin-left: auto;
@@ -196,12 +202,12 @@ mark { background: rgba(237,187,0,.3); color: #fff; border-radius: 3px; padding:
 
 .campo { display: flex; flex-direction: column; gap: .4rem; }
 .campo > span { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--texto-suave); font-family: var(--mono); }
-.campo input[type="text"], .campo textarea {
+.campo input[type="text"], .campo input[type="password"], .campo textarea {
   width: 100%; padding: .7rem .85rem; font: inherit; color: var(--texto);
   background: rgba(255,255,255,.05); border: 1px solid var(--borde); border-radius: 12px;
   outline: 0; resize: vertical; transition: border-color .2s, box-shadow .2s;
 }
-.campo input[type="text"]:focus, .campo textarea:focus {
+.campo input[type="text"]:focus, .campo input[type="password"]:focus, .campo textarea:focus {
   border-color: var(--dorado); box-shadow: 0 0 0 3px rgba(237,187,0,.15);
 }
 .subida { display: flex; align-items: center; gap: .6rem; }
