@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#050814" />
+  <meta name="description" content="NotasJ19 — notas con imágenes y adjuntos, guardadas en tu navegador." />
+  <title>NotasJ19</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Fondo decorativo: resplandores azulgrana -->
+  <div class="fondo" aria-hidden="true">
+    <span class="orbe orbe--azul"></span>
+    <span class="orbe orbe--granate"></span>
+    <span class="rejilla"></span>
+  </div>
+
+  <header class="cabecera">
+    <div class="marca">
+      <span class="marca__punto" aria-hidden="true"></span>
+      <h1>Notas<span>J19</span></h1>
+    </div>
+
+    <label class="buscador">
+      <span class="sr-only">Buscar notas</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="buscador" type="search" placeholder="Buscar por título o contenido…" autocomplete="off" />
+    </label>
+
+    <button id="btnNueva" class="btn btn--primario" type="button">+ Nueva nota</button>
+  </header>
+
+  <main class="contenedor">
+    <p id="contador" class="contador" aria-live="polite"></p>
+    <section id="listaNotas" class="rejilla-notas" aria-label="Lista de notas"></section>
+    <div id="vacio" class="vacio" hidden>
+      <p class="vacio__titulo">Sin notas por aquí</p>
+      <p class="vacio__texto">Crea tu primera nota o prueba con otra búsqueda.</p>
+    </div>
+  </main>
+
+  <!-- Modal crear / editar -->
+  <dialog id="modalEditor" class="modal">
+    <form id="formNota" class="modal__caja" method="dialog" novalidate>
+      <h2 id="tituloModal">Nueva nota</h2>
+
+      <label class="campo">
+        <span>Título</span>
+        <input id="inputTitulo" type="text" maxlength="120" placeholder="Título de la nota" required />
+      </label>
+
+      <label class="campo">
+        <span>Contenido</span>
+        <textarea id="inputContenido" rows="6" placeholder="Escribe aquí…"></textarea>
+      </label>
+
+      <div class="campo">
+        <span>Imagen</span>
+        <div class="subida">
+          <label class="btn btn--sec" for="inputImagen">Elegir imagen</label>
+          <input id="inputImagen" type="file" accept="image/*" hidden />
+          <button id="btnQuitarImagen" class="btn btn--texto" type="button" hidden>Quitar</button>
+        </div>
+        <img id="previaImagen" class="previa" alt="Previsualización de la imagen" hidden />
+      </div>
+
+      <div class="campo">
+        <span>Archivo adjunto</span>
+        <div class="subida">
+          <label class="btn btn--sec" for="inputAdjunto">Elegir archivo</label>
+          <input id="inputAdjunto" type="file" hidden />
+          <button id="btnQuitarAdjunto" class="btn btn--texto" type="button" hidden>Quitar</button>
+        </div>
+        <p id="nombreAdjunto" class="adjunto-nombre" hidden></p>
+      </div>
+
+      <p id="errorForm" class="error" role="alert" hidden></p>
+
+      <div class="modal__acciones">
+        <button id="btnCancelar" class="btn btn--texto" type="button">Cancelar</button>
+        <button class="btn btn--primario" type="submit">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Modal confirmar eliminación -->
+  <dialog id="modalBorrar" class="modal modal--chico">
+    <div class="modal__caja">
+      <h2>¿Eliminar nota?</h2>
+      <p>Esta acción no se puede deshacer.</p>
+      <div class="modal__acciones">
+        <button id="btnNoBorrar" class="btn btn--texto" type="button">Cancelar</button>
+        <button id="btnSiBorrar" class="btn btn--peligro" type="button">Eliminar</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Visor de imagen ampliada -->
+  <dialog id="modalImagen" class="modal modal--imagen">
+    <img id="imagenGrande" alt="Imagen ampliada" />
+  </dialog>
+
+  <!-- Orden importante: primero la capa de datos, luego la interfaz -->
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
