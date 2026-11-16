@@ -1,8 +1,13 @@
 /**
  * sync.js — Sincronización de NotasJ19 con el servidor (/api en Vercel)
  * ---------------------------------------------------------------
- * IndexedDB sigue siendo la copia local (rápida y con soporte offline);
- * este módulo la mantiene igualada con el servidor:
+ * Sin cuentas ni contraseñas: cada navegador genera un código de "espacio"
+ * aleatorio. Para ver las mismas notas en otro dispositivo basta con abrir el
+ * enlace que contiene ese código (o pegar el código). Quien tenga el enlace
+ * accede a las notas, así que se trata como un enlace privado.
+ *
+ * IndexedDB sigue siendo la copia local (rápida y con soporte offline); este
+ * módulo la mantiene igualada con el servidor:
  *   - nota nueva o editada aquí      -> se sube
  *   - nota nueva o editada en otro   -> se baja
  *   - nota borrada aquí              -> se borra en el servidor
@@ -16,17 +21,22 @@
 const Sync = (() => {
 'use strict';
 
-const CLAVE_SESION = 'notasj19_sesion';          // { token } de la sesión iniciada
+const CLAVE_ESPACIO = 'notasj19_espacio';        // código del espacio de este dispositivo
+const CLAVE_APAGADA = 'notasj19_sync_apagada';   // true si el usuario desactivó la sincronización
 const CLAVE_ESTADO = 'notasj19_sync_estado';     // id -> `actualizada` de la última sincronización
 const CLAVE_BORRADAS = 'notasj19_borradas';      // ids borrados en este dispositivo (la escribe app.js)
 const API = '/api';
 const INTERVALO_MS = 60000;
+const CODIGO_VALIDO = /^[A-Za-z0-9_-]{22,64}$/;
+const TOLERADOS = [400, 403, 413, 503];          // errores propios de una nota: no frenan a las demás
+const MSG_LOCAL = 'Sin servidor: la app está abierta como archivo o en un sitio sin /api. Tus notas se guardan solo en este navegador.';
 
 let enCurso = false;
 let repetir = false;
+let servidorAusente = false;   // no hay /api: se deja de intentar hasta recargar la página
 let temporizador = null;
 let alCambiar = () => {};   // se llama cuando la sincronización modificó la base local
-let alEstado = () => {};    // se llama con ('sincronizando' | 'ok' | 'error', mensaje)
+let alEstado = () => {};    // se llama con ('sincronizando' | 'ok' | 'error' | 'local', mensaje)
 
 /* ---------- Estado local ---------- */
 
@@ -36,66 +46,110 @@ function leer(clave, defecto) {
 function guardar(clave, valor) {
   try { localStorage.setItem(clave, JSON.stringify(valor)); } catch { /* sin localStorage: se ignora */ }
 }
+function quitar(clave) {
+  try { localStorage.removeItem(clave); } catch { /* ignorar */ }
+}
 
-const activa = () => Boolean(leer(CLAVE_SESION, null)?.token);
 const enArchivoLocal = () => typeof location !== 'undefined' && location.protocol === 'file:';
-const MSG_LOCAL = 'La sincronización solo funciona en la app publicada en Vercel, no abierta como archivo.';
+const espacio = () => leer(CLAVE_ESPACIO, null);
+const activa = () => Boolean(espacio()) && !leer(CLAVE_APAGADA, false);
 
 function configurar(opciones) {
   if (opciones.alCambiar) alCambiar = opciones.alCambiar;
   if (opciones.alEstado) alEstado = opciones.alEstado;
 }
 
-/* ---------- Sesión ---------- */
+/* ---------- Espacio (código de acceso) ---------- */
 
-/** Inicia sesión con la contraseña. Devuelve null si salió bien, o un mensaje de error. */
-async function entrar(password) {
-  if (enArchivoLocal()) return MSG_LOCAL;
-  try {
-    const res = await fetch(`${API}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    const datos = await res.json().catch(() => ({}));
-    if (!res.ok) return (await errorHTTP(res, 'iniciar sesión', datos)).message;
-    guardar(CLAVE_SESION, { token: datos.token });
-    return null;
-  } catch {
-    return 'No se pudo conectar con el servidor.';
-  }
+/** 24 caracteres aleatorios (144 bits), seguros para usar en una URL. */
+function generarCodigo() {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Cierra la sesión en este dispositivo (las notas locales se conservan). */
-function salir() {
-  try { localStorage.removeItem(CLAVE_SESION); } catch { /* ignorar */ }
+/** Al abrir la app: si no hay espacio y la sincronización no está apagada, crea uno. */
+function iniciar() {
+  if (!enArchivoLocal() && !leer(CLAVE_APAGADA, false) && !espacio()) guardar(CLAVE_ESPACIO, generarCodigo());
+}
+
+/** Enlace que abre este mismo espacio en otro dispositivo. */
+function enlace() {
+  return `${location.origin}${location.pathname}#e=${espacio()}`;
+}
+
+/** Código contenido en la dirección actual (`#e=CODIGO`), o null. */
+function codigoDeEnlace() {
+  const m = (typeof location !== 'undefined' ? location.hash : '').match(/^#?e=([A-Za-z0-9_-]{22,64})$/);
+  return m ? m[1] : null;
+}
+
+/** Saca el código de un texto pegado: un enlace completo o el código solo. */
+function extraerCodigo(texto) {
+  const t = String(texto || '').trim();
+  const m = t.match(/[#?&]e=([A-Za-z0-9_-]{22,64})/);
+  if (m) return m[1];
+  return CODIGO_VALIDO.test(t) ? t : null;
+}
+
+/** Vincula este dispositivo a un espacio (sus notas se combinarán con las de ese espacio). */
+function adoptar(codigo) {
+  if (!CODIGO_VALIDO.test(codigo)) return false;
+  if (codigo !== espacio()) {
+    guardar(CLAVE_ESPACIO, codigo);
+    quitar(CLAVE_ESTADO);        // historial de otro espacio: ya no sirve
+  }
+  quitar(CLAVE_APAGADA);
+  servidorAusente = false;
+  return true;
+}
+
+function activar() {
+  quitar(CLAVE_APAGADA);
+  if (!espacio() && !enArchivoLocal()) guardar(CLAVE_ESPACIO, generarCodigo());
+}
+
+/** Detiene la sincronización (las notas locales y el código se conservan). */
+function desactivar() {
+  guardar(CLAVE_APAGADA, true);
 }
 
 /* ---------- Acceso a la API ---------- */
 
-async function api(ruta, opciones = {}) {
-  const sesion = leer(CLAVE_SESION, null);
-  const res = await fetch(`${API}/${ruta}`, {
+function api(ruta, opciones = {}) {
+  return fetch(`${API}/${ruta}`, {
     cache: 'no-store',
     ...opciones,
-    headers: { ...(opciones.headers || {}), Authorization: `Bearer ${sesion ? sesion.token : ''}` },
+    headers: { ...(opciones.headers || {}), 'X-Espacio': espacio() },
   });
-  if (res.status === 401) {
-    salir();
-    throw new Error('Sesión vencida: pulsa ☁ Sincronizar para entrar de nuevo.');
-  }
-  return res;
 }
 
-/** Traduce una respuesta HTTP fallida a un mensaje entendible. */
-async function errorHTTP(res, accion, cuerpo) {
+/** Traduce una respuesta HTTP fallida a un error con mensaje entendible. */
+async function errorHTTP(res, accion) {
   let msg = '';
-  try { msg = (cuerpo || await res.json()).error || ''; } catch { /* sin cuerpo JSON */ }
+  try { msg = (await res.json()).error || ''; } catch { /* sin cuerpo JSON */ }
+  let err;
   if (res.status === 404 && !msg) {
-    return new Error('No se encontró el servidor (/api). La sincronización solo funciona en la app publicada en Vercel.');
+    err = new Error(MSG_LOCAL);
+    err.ausente = true;
+  } else if (res.status === 413) {
+    err = new Error('Archivo demasiado grande para el servidor (máx. 4 MB).');
+  } else {
+    err = new Error(msg || `El servidor respondió ${res.status} al ${accion}.`);
   }
-  if (res.status === 413) return new Error('Archivo demasiado grande para el servidor (máx. 4 MB).');
-  return new Error(msg || `El servidor respondió ${res.status} al ${accion}.`);
+  err.estado = res.status;
+  return err;
+}
+
+/** Comprueba si el servidor, la base de datos y el almacenamiento de archivos están listos. */
+async function diagnostico() {
+  if (enArchivoLocal()) return { servidor: false, mensaje: MSG_LOCAL };
+  try {
+    const res = await fetch(`${API}/estado`, { cache: 'no-store' });
+    if (!res.ok) return { servidor: false, mensaje: MSG_LOCAL };
+    return await res.json();
+  } catch {
+    return { servidor: false, mensaje: 'No se pudo conectar con el servidor.' };
+  }
 }
 
 const enc = encodeURIComponent;
@@ -193,11 +247,12 @@ async function borrarRemoto(id) {
 /**
  * Iguala la base local con el servidor.
  * Devuelve null si todo fue bien, o un mensaje de error.
- * Las operaciones son secuenciales para no saturar el servidor.
+ * Si una nota concreta falla (límite, archivo grande…), las demás se siguen
+ * sincronizando y se informa del primer problema.
  */
 async function sincronizar() {
+  if (enArchivoLocal() || servidorAusente) { alEstado('local', MSG_LOCAL); return MSG_LOCAL; }
   if (!activa()) return null;
-  if (enArchivoLocal()) { alEstado('error', MSG_LOCAL); return MSG_LOCAL; }
   if (enCurso) { repetir = true; return null; }
   enCurso = true;
   alEstado('sincronizando');
@@ -205,6 +260,17 @@ async function sincronizar() {
   const estado = leer(CLAVE_ESTADO, {});
   let huboCambios = false;
   let error = null;
+  let primerError = null;
+
+  // Ejecuta el paso de una nota; los errores "de esa nota" no detienen el resto.
+  const tolerar = async (paso) => {
+    try {
+      await paso();
+    } catch (err) {
+      if (err.estado && TOLERADOS.includes(err.estado)) primerError = primerError || err.message;
+      else throw err;
+    }
+  };
 
   try {
     const borradas = leer(CLAVE_BORRADAS, []);
@@ -220,36 +286,42 @@ async function sincronizar() {
 
     // 2) Notas que existen en el servidor.
     for (const [id, version] of Object.entries(remoto)) {
-      const local = porId.get(id);
-      const previo = estado[id];
-      if (!local) { estado[id] = await bajar(id); huboCambios = true; continue; }
+      await tolerar(async () => {
+        const local = porId.get(id);
+        const previo = estado[id];
+        if (!local) { estado[id] = await bajar(id); huboCambios = true; return; }
 
-      const localCambio = previo === undefined || local.actualizada !== previo;
-      const remotoCambio = previo === undefined || version !== previo;
-      if (!localCambio && !remotoCambio) continue;
-      if (remotoCambio && !localCambio) { estado[id] = await bajar(id); huboCambios = true; continue; }
-      if (localCambio && !remotoCambio) { await subir(local); estado[id] = local.actualizada; continue; }
+        const localCambio = previo === undefined || local.actualizada !== previo;
+        const remotoCambio = previo === undefined || version !== previo;
+        if (!localCambio && !remotoCambio) return;
+        if (remotoCambio && !localCambio) { estado[id] = await bajar(id); huboCambios = true; return; }
+        if (localCambio && !remotoCambio) { await subir(local); estado[id] = local.actualizada; return; }
 
-      // Cambiaron ambos lados: gana la versión más reciente.
-      if (version > local.actualizada) { estado[id] = await bajar(id); huboCambios = true; }
-      else if (version === local.actualizada) estado[id] = version;
-      else { await subir(local); estado[id] = local.actualizada; }
+        // Cambiaron ambos lados: gana la versión más reciente.
+        if (version > local.actualizada) { estado[id] = await bajar(id); huboCambios = true; }
+        else if (version === local.actualizada) estado[id] = version;
+        else { await subir(local); estado[id] = local.actualizada; }
+      });
     }
 
     // 3) Notas locales que no están en el servidor.
     for (const n of locales) {
       if (borradas.includes(n.id) || remoto[n.id] !== undefined) continue;
-      if (estado[n.id] !== undefined && estado[n.id] === n.actualizada) {
-        // Ya estaba sincronizada y sin cambios: otro dispositivo la borró.
-        await DB.remove(n.id);
-        delete estado[n.id];
-        huboCambios = true;
-      } else {
-        await subir(n);   // nota nueva (o editada aquí después de borrarse en otro lado)
-        estado[n.id] = n.actualizada;
-      }
+      await tolerar(async () => {
+        if (estado[n.id] !== undefined && estado[n.id] === n.actualizada) {
+          // Ya estaba sincronizada y sin cambios: otro dispositivo la borró.
+          await DB.remove(n.id);
+          delete estado[n.id];
+          huboCambios = true;
+        } else {
+          await subir(n);   // nota nueva (o editada aquí después de borrarse en otro lado)
+          estado[n.id] = n.actualizada;
+        }
+      });
     }
+    error = primerError;
   } catch (err) {
+    if (err.ausente) servidorAusente = true;
     if (err instanceof TypeError) {
       error = navigator.onLine ? 'No se pudo conectar con el servidor.' : 'Sin conexión; se sincronizará al volver.';
     } else if (err instanceof SyntaxError) {
@@ -263,7 +335,8 @@ async function sincronizar() {
   }
 
   if (huboCambios) alCambiar();
-  alEstado(error ? 'error' : 'ok', error);
+  if (servidorAusente) alEstado('local', MSG_LOCAL);
+  else alEstado(error ? 'error' : 'ok', error);
   if (repetir) { repetir = false; sincronizar(); }
   return error;
 }
@@ -282,5 +355,8 @@ function iniciarAuto() {
   window.addEventListener('online', sincronizar);
 }
 
-return { activa, entrar, salir, configurar, sincronizar, programar, iniciarAuto };
+return {
+  activa, espacio, iniciar, enlace, codigoDeEnlace, extraerCodigo, adoptar, activar, desactivar,
+  diagnostico, configurar, sincronizar, programar, iniciarAuto,
+};
 })();

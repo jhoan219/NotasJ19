@@ -13,9 +13,11 @@ const el = {
   lista: $('listaNotas'), vacio: $('vacio'), contador: $('contador'),
   buscador: $('buscador'), btnNueva: $('btnNueva'),
   btnExportar: $('btnExportar'), inImportar: $('inputImportar'),
-  btnSync: $('btnSync'), estadoSync: $('estadoSync'), modalSync: $('modalSync'), formSync: $('formSync'),
-  syncPassword: $('syncPassword'), syncError: $('syncError'),
-  btnSyncDesconectar: $('btnSyncDesconectar'), btnSyncCerrar: $('btnSyncCerrar'), btnSyncGuardar: $('btnSyncGuardar'),
+  btnSync: $('btnSync'), estadoSync: $('estadoSync'), modalSync: $('modalSync'),
+  syncResumen: $('syncResumen'), syncDiag: $('syncDiag'), syncPanel: $('syncPanel'),
+  syncEnlace: $('syncEnlace'), btnCopiarEnlace: $('btnCopiarEnlace'), btnCompartirEnlace: $('btnCompartirEnlace'),
+  syncCodigo: $('syncCodigo'), btnUsarCodigo: $('btnUsarCodigo'), syncError: $('syncError'),
+  btnSyncToggle: $('btnSyncToggle'), btnSyncCerrar: $('btnSyncCerrar'), btnSyncAhora: $('btnSyncAhora'),
   modalEditor: $('modalEditor'), form: $('formNota'), tituloModal: $('tituloModal'),
   inTitulo: $('inputTitulo'), inContenido: $('inputContenido'),
   inImagen: $('inputImagen'), previaImagen: $('previaImagen'), btnQuitarImagen: $('btnQuitarImagen'),
@@ -331,50 +333,103 @@ function pintarEstado(estado, mensaje) {
     sincronizando: '☁ Sincronizando…',
     ok: `☁ Sincronizado ${hora}`,
     error: `⚠ ${mensaje}`,
+    local: '💾 Solo en este dispositivo',
     apagada: '',
   };
   el.estadoSync.textContent = textos[estado] ?? '';
 }
 Sync.configurar({ alCambiar: cargar, alEstado: pintarEstado });
 
+/** Al abrir un enlace con #e=CODIGO, vincula este dispositivo a ese espacio de notas. */
+function procesarEnlace() {
+  const codigo = Sync.codigoDeEnlace();
+  if (!codigo) return;
+  // Se quita el código de la barra de direcciones para que no quede a la vista ni en el historial.
+  history.replaceState(null, '', location.pathname + location.search);
+  const actual = Sync.espacio();
+  if (codigo === actual) return;
+  if (actual && !confirm('Este enlace abre otro espacio de notas. ¿Usarlo en este dispositivo? Las notas de aquí se combinarán con las de ese espacio.')) return;
+  Sync.adoptar(codigo);
+}
+
+function mostrarErrorSync(mensaje) {
+  el.syncError.textContent = mensaje || '';
+  el.syncError.hidden = !mensaje;
+}
+
+function textoDiagnostico(d) {
+  if (!d.servidor) return `✗ ${d.mensaje}`;
+  const lineas = [`${d.redis ? '✓' : '✗'} Base de datos (Redis)    ${d.blob ? '✓' : '✗'} Archivos (Blob)`];
+  return lineas.concat(d.problemas || []).join('\n');
+}
+
+/** Refleja en el modal si la sincronización está activa y muestra el enlace del espacio. */
+function actualizarModalSync() {
+  const activa = Sync.activa();
+  el.syncPanel.hidden = !activa;
+  el.syncEnlace.value = activa ? Sync.enlace() : '';
+  el.btnSyncAhora.hidden = !activa;
+  el.btnCompartirEnlace.hidden = !navigator.share;
+  el.btnSyncToggle.textContent = activa ? 'Desactivar' : 'Activar sincronización';
+  el.syncResumen.textContent = activa
+    ? 'La sincronización está activa: tus notas se guardan en tu servidor y se mantienen al día en los dispositivos que abran el enlace.'
+    : 'La sincronización está desactivada: tus notas solo se guardan en este navegador.';
+}
+
 el.btnSync.addEventListener('click', () => {
-  const dentro = Sync.activa();
-  el.syncPassword.value = '';
-  el.syncPassword.closest('label').hidden = dentro;   // con sesión iniciada no hace falta la contraseña
-  el.btnSyncDesconectar.hidden = !dentro;
-  el.btnSyncGuardar.textContent = dentro ? 'Sincronizar ahora' : 'Entrar y sincronizar';
-  el.syncError.hidden = true;
+  mostrarErrorSync('');
+  el.syncDiag.textContent = 'Comprobando el servidor…';
+  actualizarModalSync();
   el.modalSync.showModal();
-  if (!dentro) el.syncPassword.focus();
+  Sync.diagnostico().then((d) => { el.syncDiag.textContent = textoDiagnostico(d); });
 });
 el.btnSyncCerrar.addEventListener('click', () => el.modalSync.close());
 
-el.formSync.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  el.syncError.hidden = true;
-  el.btnSyncGuardar.disabled = true;
-
-  let error = null;
-  if (!Sync.activa()) {
-    const clave = el.syncPassword.value;
-    error = clave ? await Sync.entrar(clave) : 'Escribe la contraseña.';
+el.btnCopiarEnlace.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(el.syncEnlace.value);
+  } catch {
+    el.syncEnlace.select();
+    document.execCommand('copy');   // respaldo para navegadores sin portapapeles asíncrono
   }
-  if (!error) error = await Sync.sincronizar();
-
-  el.btnSyncGuardar.disabled = false;
-  if (error) {
-    el.syncError.textContent = error;
-    el.syncError.hidden = false;
-  } else {
-    el.syncPassword.value = '';
-    el.modalSync.close();
-  }
+  el.btnCopiarEnlace.textContent = 'Copiado ✓';
+  setTimeout(() => { el.btnCopiarEnlace.textContent = 'Copiar enlace'; }, 1500);
 });
 
-el.btnSyncDesconectar.addEventListener('click', () => {
-  Sync.salir();
-  pintarEstado('apagada');
-  el.modalSync.close();
+el.btnCompartirEnlace.addEventListener('click', () => {
+  navigator.share({ title: 'NotasJ19', text: 'Abre mis notas', url: el.syncEnlace.value }).catch(() => { /* cancelado */ });
+});
+
+el.btnUsarCodigo.addEventListener('click', async () => {
+  const codigo = Sync.extraerCodigo(el.syncCodigo.value);
+  if (!codigo) return mostrarErrorSync('El enlace o código no es válido.');
+  if (codigo === Sync.espacio()) return mostrarErrorSync('Ya estás usando ese espacio.');
+  if (!confirm('Las notas de este dispositivo se combinarán con las de ese espacio. ¿Continuar?')) return;
+  Sync.adoptar(codigo);
+  el.syncCodigo.value = '';
+  actualizarModalSync();
+  mostrarErrorSync(await Sync.sincronizar());
+});
+
+el.btnSyncAhora.addEventListener('click', async () => {
+  mostrarErrorSync('');
+  el.btnSyncAhora.disabled = true;
+  mostrarErrorSync(await Sync.sincronizar());
+  el.btnSyncAhora.disabled = false;
+});
+
+el.btnSyncToggle.addEventListener('click', async () => {
+  mostrarErrorSync('');
+  if (Sync.activa()) {
+    if (!confirm('Tus notas seguirán en este navegador, pero dejarán de sincronizarse. ¿Desactivar?')) return;
+    Sync.desactivar();
+    pintarEstado('apagada');
+    actualizarModalSync();
+  } else {
+    Sync.activar();
+    actualizarModalSync();
+    mostrarErrorSync(await Sync.sincronizar());
+  }
 });
 
 /* ---------- Arranque ---------- */
@@ -387,6 +442,8 @@ async function cargar() {
   try {
     await DB.init();
     await cargar();
+    procesarEnlace();
+    Sync.iniciar();
     Sync.iniciarAuto();
     Sync.sincronizar();
   } catch (err) {

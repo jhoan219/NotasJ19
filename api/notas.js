@@ -1,6 +1,6 @@
 /**
- * /api/notas
- *   GET              -> [{ id, actualizada }]          índice de todas las notas
+ * /api/notas   (todas las rutas exigen la cabecera X-Espacio)
+ *   GET              -> [{ id, actualizada }]          índice de las notas del espacio
  *   GET    ?id=ID    -> nota (JSON)
  *   PUT    ?id=ID    -> guarda la nota; si faltan archivos responde 409 { faltan: [hash] }
  *   DELETE ?id=ID    -> borra la nota y sus archivos
@@ -10,9 +10,12 @@
  * archivos ya están subidos.
  */
 import { del } from '@vercel/blob';
-import { autorizado } from '../lib/auth.js';
+import { espacioDe, registrarEspacio, limites } from '../lib/espacio.js';
 import { comando, pipeline } from '../lib/redis.js';
-import { json, seguro, parametros, ID_VALIDO, HASH_VALIDO, IDX, kNota, kMedia, rutaMedia } from '../lib/util.js';
+import {
+  json, seguro, parametros, aPares, ID_VALIDO, HASH_VALIDO,
+  kIdx, kNota, kMedia, kTam, rutaMedia,
+} from '../lib/util.js';
 
 /** Valida y normaliza una nota recibida. Devuelve null si no es válida. */
 function limpiarNota(id, d) {
@@ -51,20 +54,16 @@ function limpiarNota(id, d) {
 
 export default async function handler(request) {
   return seguro(async () => {
-    if (!autorizado(request)) return json({ error: 'No autorizado.' }, 401);
+    const esp = espacioDe(request);
+    if (!esp) return json({ error: 'Falta el código de espacio (cabecera X-Espacio) o no es válido.' }, 400);
 
     const id = parametros(request).get('id');
     const metodo = request.method;
 
     /* ----- Índice ----- */
     if (metodo === 'GET' && !id) {
-      const plano = await comando('HGETALL', IDX);
-      const lista = [];
-      if (Array.isArray(plano)) {
-        for (let i = 0; i < plano.length; i += 2) lista.push({ id: plano[i], actualizada: Number(plano[i + 1]) });
-      } else if (plano && typeof plano === 'object') {
-        for (const [k, v] of Object.entries(plano)) lista.push({ id: k, actualizada: Number(v) });
-      }
+      const lista = aPares(await comando('HGETALL', kIdx(esp)))
+        .map(([k, v]) => ({ id: k, actualizada: Number(v) }));
       return json(lista);
     }
 
@@ -72,7 +71,7 @@ export default async function handler(request) {
 
     /* ----- Leer una nota ----- */
     if (metodo === 'GET') {
-      const texto = await comando('GET', kNota(id));
+      const texto = await comando('GET', kNota(esp, id));
       if (!texto) return json({ error: 'La nota no existe.' }, 404);
       return new Response(typeof texto === 'string' ? texto : JSON.stringify(texto), {
         headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -84,24 +83,35 @@ export default async function handler(request) {
       const nota = limpiarNota(id, await request.json().catch(() => null));
       if (!nota) return json({ error: 'Nota inválida.' }, 400);
 
+      // Límite de notas por espacio (editar una nota existente siempre se permite).
+      const [existe, total] = await pipeline([['HEXISTS', kIdx(esp), id], ['HLEN', kIdx(esp)]]);
+      const maxNotas = limites().notas;
+      if (Number(existe) === 0 && Number(total) >= maxNotas) {
+        return json({ error: `Este espacio alcanzó el máximo de ${maxNotas} notas.` }, 403);
+      }
+
       const referenciados = [...new Set([nota.imagen?.hash, nota.adjunto?.hash].filter(Boolean))];
-      const existentes = new Set(await comando('SMEMBERS', kMedia(id)));
+      const existentes = new Set(await comando('SMEMBERS', kMedia(esp, id)));
 
       // Si falta algún archivo, el cliente debe subirlo y volver a confirmar.
       const faltan = referenciados.filter((h) => !existentes.has(h));
       if (faltan.length) return json({ faltan }, 409);
 
+      await registrarEspacio(esp);
       await pipeline([
-        ['SET', kNota(id), JSON.stringify(nota)],
-        ['HSET', IDX, id, nota.actualizada],
+        ['SET', kNota(esp, id), JSON.stringify(nota)],
+        ['HSET', kIdx(esp), id, nota.actualizada],
       ]);
 
       // Archivos que la nota ya no usa (p. ej. se cambió la imagen): se eliminan.
       const huerfanos = [...existentes].filter((h) => !referenciados.includes(h));
       if (huerfanos.length) {
         try {
-          await del(huerfanos.map((h) => rutaMedia(id, h)));
-          await comando('SREM', kMedia(id), ...huerfanos);
+          await del(huerfanos.map((h) => rutaMedia(esp, id, h)));
+          await pipeline([
+            ['SREM', kMedia(esp, id), ...huerfanos],
+            ['HDEL', kTam(esp), ...huerfanos.map((h) => `${id}/${h}`)],
+          ]);
         } catch (err) {
           console.error('No se pudieron limpiar archivos huérfanos:', err);   // no impide guardar
         }
@@ -111,11 +121,16 @@ export default async function handler(request) {
 
     /* ----- Borrar una nota ----- */
     if (metodo === 'DELETE') {
-      const hashes = await comando('SMEMBERS', kMedia(id));
+      const hashes = await comando('SMEMBERS', kMedia(esp, id));
       // Si falla el borrado de archivos se lanza el error y NO se tocan las
       // referencias, de modo que el cliente reintente y no queden archivos sueltos.
-      if (hashes.length) await del(hashes.map((h) => rutaMedia(id, h)));
-      await pipeline([['DEL', kNota(id)], ['DEL', kMedia(id)], ['HDEL', IDX, id]]);
+      if (hashes.length) await del(hashes.map((h) => rutaMedia(esp, id, h)));
+      await pipeline([
+        ['DEL', kNota(esp, id)],
+        ['DEL', kMedia(esp, id)],
+        ['HDEL', kIdx(esp), id],
+        ...(hashes.length ? [['HDEL', kTam(esp), ...hashes.map((h) => `${id}/${h}`)]] : []),
+      ]);
       return json({ ok: true });
     }
 

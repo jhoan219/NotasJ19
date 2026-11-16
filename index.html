@@ -105,23 +105,39 @@
 
   <!-- Modal de sincronización con el servidor -->
   <dialog id="modalSync" class="modal">
-    <form id="formSync" class="modal__caja" method="dialog" novalidate>
+    <div class="modal__caja">
       <h2>Sincronización</h2>
-      <p class="ayuda">Tus notas se guardan en tu propio servidor (Vercel) y aparecen en todos tus dispositivos. Entra con la contraseña que definiste al desplegar la app; se pide una vez por dispositivo y la sesión dura 30 días.</p>
+      <p id="syncResumen" class="ayuda"></p>
+      <p id="syncDiag" class="ayuda"></p>
 
-      <label class="campo">
-        <span>Contraseña</span>
-        <input id="syncPassword" type="password" autocomplete="current-password" />
-      </label>
+      <section id="syncPanel">
+        <div class="campo">
+          <span>Abrir en otro dispositivo</span>
+          <p class="ayuda">Abre este enlace en tu celular o en otra computadora y verás las mismas notas, siempre al día. No necesita contraseña: <strong>quien tenga el enlace puede ver y editar tus notas</strong>, así que no lo publiques.</p>
+          <input id="syncEnlace" type="text" readonly />
+          <div class="subida">
+            <button id="btnCopiarEnlace" class="btn btn--sec" type="button">Copiar enlace</button>
+            <button id="btnCompartirEnlace" class="btn btn--sec" type="button" hidden>Compartir</button>
+          </div>
+        </div>
+
+        <div class="campo">
+          <span>¿Ya tienes un enlace o código?</span>
+          <input id="syncCodigo" type="text" placeholder="Pega aquí el enlace o el código" autocomplete="off" autocapitalize="off" />
+          <div class="subida">
+            <button id="btnUsarCodigo" class="btn btn--sec" type="button">Usar ese espacio</button>
+          </div>
+        </div>
+      </section>
 
       <p id="syncError" class="error" role="alert" hidden></p>
 
       <div class="modal__acciones">
-        <button id="btnSyncDesconectar" class="btn btn--texto" type="button" hidden>Cerrar sesión</button>
+        <button id="btnSyncToggle" class="btn btn--texto" type="button">Desactivar</button>
         <button id="btnSyncCerrar" class="btn btn--texto" type="button">Cerrar</button>
-        <button id="btnSyncGuardar" class="btn btn--primario" type="submit">Entrar y sincronizar</button>
+        <button id="btnSyncAhora" class="btn btn--primario" type="button">Sincronizar ahora</button>
       </div>
-    </form>
+    </div>
   </dialog>
 
   <!-- Visor de imagen ampliada -->

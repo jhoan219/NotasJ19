@@ -226,3 +226,8 @@ mark { background: rgba(237,187,0,.3); color: #fff; border-radius: 3px; padding:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Modal de sincronización ---------- */
+#syncDiag { white-space: pre-line; font-family: var(--mono); font-size: .78rem; }
+.campo input[readonly] { color: var(--dorado); font-family: var(--mono); font-size: .8rem; text-overflow: ellipsis; }
+.modal__caja section { display: flex; flex-direction: column; gap: 1rem; }
